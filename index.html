@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Modrinth Modpack Viewer</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-color: #0f0f0f;
+      color: #f2f2f2;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+      padding: 2rem;
+    }
+
+    h1 {
+      margin-bottom: 1rem;
+      font-size: 2rem;
+      color: #ffffff;
+    }
+
+    .dropzone {
+      border: 2px dashed #666;
+      background-color: #1c1c1c;
+      padding: 3rem;
+      border-radius: 12px;
+      text-align: center;
+      margin-bottom: 2rem;
+      width: 100%;
+      max-width: 600px;
+      transition: background-color 0.3s ease;
+    }
+
+    .dropzone:hover {
+      background-color: #2a2a2a;
+    }
+
+    .modlist {
+      width: 100%;
+      max-width: 600px;
+      background-color: #1c1c1c;
+      border-radius: 8px;
+      padding: 1rem;
+      box-shadow: 0 0 15px rgba(0, 255, 0, 0.2);
+    }
+
+    .modlist ul {
+      list-style: none;
+    }
+
+    .modlist li {
+      padding: 0.5rem 0;
+      border-bottom: 1px solid #333;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .modlist img {
+      width: 24px;
+      height: 24px;
+      object-fit: cover;
+      border-radius: 4px;
+    }
+
+    .footer {
+      margin-top: auto;
+      padding-top: 2rem;
+      color: #777;
+      font-size: 0.9rem;
+    }
+
+    .footer a {
+      color: #4caf50;
+      text-decoration: none;
+    }
+
+    #searchBar {
+      width: 100%;
+      max-width: 600px;
+      margin-bottom: 1rem;
+      padding: 0.5rem;
+      background-color: #1c1c1c;
+      border: 1px solid #333;
+      color: #fff;
+      border-radius: 6px;
+    }
+
+    #exportBtn {
+      margin-top: 1rem;
+      padding: 0.5rem 1rem;
+      background-color: #4caf50;
+      border: none;
+      border-radius: 6px;
+      color: white;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <h1>Modrinth Modpack Viewer</h1>
+  <div class="dropzone" id="dropzone">
+    <p>Drag and drop your <strong>.mrpack</strong> or <strong>.zip</strong> file here</p>
+    <input type="file" id="fileInput" style="display: none" />
+  </div>
+
+  <input type="text" id="searchBar" placeholder="Search mods...">
+
+  <div class="modlist" id="modlist" style="display: none">
+    <h2>Mods</h2>
+    <ul id="modnames"></ul>
+    <button id="exportBtn">Export as .txt</button>
+  </div>
+
+  <div class="footer">
+    Made by <a href="#">EZbacon</a>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script>
+    const dropzone = document.getElementById('dropzone');
+    const fileInput = document.getElementById('fileInput');
+    const modlist = document.getElementById('modlist');
+    const modnames = document.getElementById('modnames');
+    const searchBar = document.getElementById('searchBar');
+    const exportBtn = document.getElementById('exportBtn');
+
+    let allModElements = [];
+
+    dropzone.addEventListener('click', () => fileInput.click());
+    dropzone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropzone.style.backgroundColor = '#2a2a2a';
+    });
+    dropzone.addEventListener('dragleave', () => {
+      dropzone.style.backgroundColor = '#1c1c1c';
+    });
+    dropzone.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      const file = e.dataTransfer.files[0];
+      await handleFile(file);
+    });
+    fileInput.addEventListener('change', async () => {
+      const file = fileInput.files[0];
+      await handleFile(file);
+    });
+
+    searchBar.addEventListener('input', () => {
+      const query = searchBar.value.toLowerCase();
+      allModElements.forEach(({ li, name }) => {
+        li.style.display = name.toLowerCase().includes(query) ? 'flex' : 'none';
+      });
+    });
+
+    exportBtn.addEventListener('click', () => {
+      const text = allModElements.map(({ name }) => name).join('\n');
+      const blob = new Blob([text], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'modlist.txt';
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    async function fetchModInfo(url) {
+      try {
+        const match = url.match(/data\/(.*?)\//);
+        if (!match) return null;
+        const projectId = match[1];
+        const res = await fetch(`https://api.modrinth.com/v2/project/${projectId}`);
+        if (!res.ok) return null;
+        const data = await res.json();
+        return { name: data.title || 'Unnamed Mod', icon: data.icon_url };
+      } catch (e) {
+        console.warn('Fetch fail:', e);
+        return null;
+      }
+    }
+
+    async function handleFile(file) {
+      if (!file.name.endsWith('.zip') && !file.name.endsWith('.mrpack')) {
+        alert('Only .mrpack or .zip files are supported');
+        return;
+      }
+
+      const zip = await JSZip.loadAsync(file);
+      let manifest;
+      if (zip.files['modrinth.index.json']) {
+        manifest = JSON.parse(await zip.files['modrinth.index.json'].async('string'));
+      } else if (zip.files['manifest.json']) {
+        manifest = JSON.parse(await zip.files['manifest.json'].async('string'));
+      } else {
+        alert('No modrinth.index.json or manifest.json found. Wrong modpack?');
+        return;
+      }
+
+      modnames.innerHTML = '<li>Loading mod names...</li>';
+      allModElements = [];
+
+      const mods = await Promise.all(manifest.files.map(async mod => {
+        if (!mod.downloads || !mod.downloads[0]) return null;
+        const info = await fetchModInfo(mod.downloads[0]);
+        if (!info) return null;
+        return info;
+      }));
+
+      modnames.innerHTML = '';
+
+      mods.filter(m => m).forEach(({ name, icon }) => {
+        const li = document.createElement('li');
+        if (icon) {
+          const img = document.createElement('img');
+          img.src = icon;
+          img.alt = name;
+          li.appendChild(img);
+        }
+        const span = document.createElement('span');
+        span.textContent = name;
+        li.appendChild(span);
+        modnames.appendChild(li);
+        allModElements.push({ li, name });
+      });
+
+      modlist.style.display = 'block';
+    }
+  </script>
+</body>
+</html>
